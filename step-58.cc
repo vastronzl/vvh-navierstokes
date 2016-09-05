@@ -168,8 +168,8 @@ namespace Step58
       }
     if (component == 3)
       {
-        return (1.0-exp(lamda*p[0]))/2.0;
-//        		+1.636084/3.0;
+        return (1.0-exp(lamda*p[0]))/2.0
+        		+1.636084/3.0;
       }
     if (component == 4)
       {
@@ -391,7 +391,7 @@ namespace Step58
   Navier_Stokes_Newton<dim>::Navier_Stokes_Newton(const unsigned int degree)
     :
 
-    viscosity(1.0/100.0),
+    viscosity(1.0/2.0),
     gamma(1.0),
     degree(degree),
     triangulation(Triangulation<dim>::maximum_smoothing),
@@ -416,7 +416,7 @@ namespace Step58
     pressure_mass_matrix.clear();
 
     dof_handler.distribute_dofs (fe);
-    DoFRenumbering::Cuthill_McKee (dof_handler);
+//    DoFRenumbering::Cuthill_McKee (dof_handler);
 
     std::vector<unsigned int> component_u(dim, 0);
     std::vector<unsigned int> component_p(1,   1);
