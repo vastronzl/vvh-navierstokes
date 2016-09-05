@@ -169,7 +169,7 @@ namespace Step58
     if (component == 3)
       {
         return (1.0-exp(lamda*p[0]))/2.0
-        		+1.636084/3.0;
+        		+1.222/3.0;
       }
     if (component == 4)
       {
