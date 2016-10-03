@@ -34,6 +34,7 @@
 #include <deal.II/lac/constraint_matrix.h>
 #include <deal.II/lac/sparse_direct.h>
 #include <deal.II/lac/identity_matrix.h>
+#include <deal.II/lac/block_matrix_array.h>
 
 #include <deal.II/grid/tria.h>
 #include <deal.II/grid/grid_generator.h>
@@ -79,7 +80,7 @@ namespace Step58
   	Tensor<1,3> result;
   	cross_product(result, A, B);
   	return result;
-  	}
+  }
 
 
 
@@ -111,6 +112,9 @@ namespace Step58
 
     double viscosity;
     double gamma;
+    double gamma1;
+    double gamma2;
+    double gamma3;
     const unsigned int           degree;
     int dof_u;
     int dof_p;
@@ -153,35 +157,42 @@ namespace Step58
                                    const unsigned int component) const
   {
     using numbers::PI;
-    const double lamda = 1/(2.0*viscosity)-sqrt(1/(4.0*viscosity*viscosity)+4*PI*PI);
+//    const double Px = p[0];
+//    const double Py = p[1];
+    const double x = p[0];
+    const double y = p[1];
+    const double z = p[2];
+
+// velocity
     if (component == 0)
       {
-        return 1.0-exp(lamda*p[0])*cos(2.0*PI*p[1]);
+    	return 2.0*sin(PI*x);
       }
     if (component == 1)
       {
-        return (0.5*lamda/PI)*exp(lamda*p[0])*sin(2.0*PI*p[1]);
+    	return -PI*y*cos(PI*x);
       }
     if (component == 2)
       {
-        return 0.0;
+    	return -PI*z*cos(PI * x);
       }
+// vorticity
     if (component == 3)
       {
-        return (1.0-exp(lamda*p[0]))/2.0
-        		+1.222/3.0;
+        return 0.0;
       }
     if (component == 4)
       {
-        return 0.0;
+    	return -PI*PI*z*sin(PI*x);
       }
     if (component == 5)
       {
-        return 0.0;
+    	return PI*PI*y*sin(PI*x);
       }
+// pressure
     if (component == 6)
       {
-        return (0.5*lamda*lamda/PI - 2.0*PI)*exp(lamda*p[0])*sin(2.0*PI*p[1]);
+    	return sin(PI*x)*cos(PI*y)*sin(PI*z);
       }
     return 0;
   }
@@ -213,48 +224,50 @@ namespace Step58
                                    const unsigned int component) const
   {
     using numbers::PI;
-    const double lamda = 1/(2.0*viscosity)-sqrt(1/(4.0*viscosity*viscosity)+4*PI*PI);
+//    const double Px = p[0];
+//    const double Py = p[1];
+    const double x = p[0];
+    const double y = p[1];
+    const double z = p[2];
 
     if (component == 0)
       {
-        return  viscosity*lamda*lamda*exp(lamda*p[0])*cos(2.0*PI*p[1])
-                -4.0*viscosity*PI*PI*exp(lamda*p[0])*cos(2.0*PI*p[1])
-                -lamda*exp(lamda*p[0])*cos(2.0*PI*p[1])
-                +lamda*exp(2.0*lamda*p[0])
-                -0.5*lamda*exp(lamda*p[0]);
+    	return  2.0*viscosity*PI*PI*sin(PI*x)
+    	      + 4*PI*sin(PI*x)*cos(PI*x)
+    	      + PI * cos(PI * x) * cos(PI * y) * sin(PI * z);
 
       }
     if (component == 1)
       {
-        return -0.5*viscosity*lamda*lamda*lamda*exp(lamda*p[0])*sin(2.0*PI*p[1])/PI
-               +2.0*viscosity*PI*lamda*exp(lamda*p[0])*sin(2.0*PI*p[1])
-               +0.5*lamda*lamda*exp(lamda*p[0])*sin(2.0*PI*p[1])/PI;
+    	return - viscosity*PI*PI*PI*y*cos(PI*x)
+    	       + PI*PI*y*sin(PI*x)*sin(PI*x) + PI*PI*y
+    	       - PI*sin(PI*x)*sin(PI*y)*sin(PI*z);
 
       }
     if (component == 2)
       {
-        return 0.0;
+    	return -viscosity*PI*PI*PI*z*cos(PI*x)
+    	       + PI*PI*z*sin(PI*x)*sin(PI*x) + PI*PI*z
+    	       + PI*sin(PI*x)*cos(PI*y)*cos(PI*z);
       }
 
     if (component == 3)
       {
-        return 0.0;
+    	return 0.0;
       }
     if (component == 4)
       {
-        return 0.0;
+    	return -viscosity*PI*PI*PI*PI*z*sin(PI*x)
+    	       -2.0*PI*PI*PI*z*sin(PI*x)*cos(PI*x);
       }
     if (component == 5)
       {
-        return 0.0;
+    	return  viscosity*PI*PI*PI*PI*y*sin(PI*x)
+    	       +2*PI*PI*PI*y*sin(PI*x)*cos(PI*x);
       }
     if (component == 6)
       {
-        return -0.5*viscosity*lamda*lamda*lamda*lamda*exp(lamda*p[0])*sin(2.0*PI*p[1])/PI
-               +4.0*viscosity*PI*lamda*lamda*exp(lamda*p[0])*sin(2.0*PI*p[1])
-               +0.5*lamda*lamda*lamda*exp(lamda*p[0])*sin(2.0*PI*p[1])/PI
-               -8.0*viscosity*PI*PI*PI*exp(lamda*p[0])*sin(2.0*PI*p[1])
-               -2.0*PI*lamda*exp(lamda*p[0])*sin(2.0*PI*p[1]);
+        return 0.0;
       }
     return 0;
   }
@@ -386,18 +399,304 @@ namespace Step58
       A_alpha_direct.vmult(dst.block(0), utmp1);
   }
 
+  template <class PreconditionerMp>
+  class BlockSchurPreconditioner1 : public Subscriptor
+  {
+  public:
+    BlockSchurPreconditioner1 (double                                     gamma,
+                              double                                     viscosity,
+                              const BlockSparseMatrix<double>            &S,
+                              const SparseMatrix<double>                 &P,
+                              const PreconditionerMp                     &Mppreconditioner
+                             );
+
+    void vmult (BlockVector<double>       &dst,
+                const BlockVector<double> &src) const;
+
+  private:
+    const double gamma;
+    const double viscosity;
+    const BlockSparseMatrix<double> &stokes_matrix;
+    const SparseMatrix<double>      &pressure_mass_matrix;
+    const PreconditionerMp          &mp_preconditioner;
+  };
+
+  template <class PreconditionerMp>
+  BlockSchurPreconditioner1<PreconditionerMp>::
+  BlockSchurPreconditioner1 (double                           gamma,
+                            double                           viscosity,
+                            const BlockSparseMatrix<double>  &S,
+                            const SparseMatrix<double>       &P,
+                            const PreconditionerMp           &Mppreconditioner)
+    :
+    gamma                (gamma),
+    viscosity            (viscosity),
+    stokes_matrix        (S),
+    pressure_mass_matrix (P),
+    mp_preconditioner    (Mppreconditioner)
+  {}
+  template <class PreconditionerMp>
+  void
+  BlockSchurPreconditioner1<PreconditionerMp>::
+  vmult (BlockVector<double>       &dst,
+         const BlockVector<double> &src) const
+  {
+	SparseDirectUMFPACK  A_beta_direct;
+	A_beta_direct.initialize(stokes_matrix.block(2,2));
+	A_beta_direct.vmult (dst.block(2), src.block(2));
+
+    Vector<double> utmp(src.block(0));
+    {
+      SolverControl solver_control(1000, 1e-6 * src.block(1).l2_norm());
+      SolverCG<>    cg (solver_control);
+      dst.block(1) = 0.0;
+      cg.solve(pressure_mass_matrix,
+               dst.block(1), src.block(1),
+               mp_preconditioner);
+      dst.block(1) *= -(viscosity+gamma);
+    }
+
+    {
+      stokes_matrix.block(0,1).vmult(utmp, dst.block(1));
+      utmp*=-1.0;
+      utmp+=src.block(0);
+    }
+
+    SparseDirectUMFPACK  A_direct;
+    A_direct.initialize(stokes_matrix.block(0,0));
+    A_direct.vmult (dst.block(0), utmp);
+  }
+
+  //**************************************************************************//
+  //**************************************************************************//
+  //**************************************************************************//
+  template <class MatrixType>
+  class InverseMatrix : public Subscriptor
+  {
+  public:
+	  InverseMatrix (const MatrixType   &m);
+  	  void vmult(Vector<double>   &dst,
+  			     const Vector<double> &src) const;
+  private:
+	  const SmartPointer<const MatrixType> matrix;
+	  SparseDirectUMFPACK  M_direct;
+  };
+
+  template <class MatrixType>
+  InverseMatrix<MatrixType>::InverseMatrix(const MatrixType &m)
+  :
+  matrix(&m)
+  {
+	  M_direct.initialize(*matrix);
+  }
+
+  template<class MatrixType>
+  void InverseMatrix<MatrixType>::vmult(Vector<double> &dst,
+		                                            const Vector<double> &src) const
+  {
+	  M_direct.vmult(dst, src);
+  }
+
+  //**************************************************************************//
+  //**************************************************************************//
+  //**************************************************************************//
+  template<class PreconditionerA, class PreconditionerB>
+  class BlockDiagonalPreconditioner : public Subscriptor
+  {
+  public:
+	  BlockDiagonalPreconditioner(const PreconditionerA  &preconditioner_A_alpha,
+			                      const PreconditionerB  &preconditioner_A_beta);
+
+	    void vmult (BlockVector<double>       &dst,
+	                const BlockVector<double> &src) const;
+  private:
+	    const PreconditionerA   &preconditioner_A_alpha;
+	    const PreconditionerB   &preconditioner_A_beta;
+  };
+
+  template <class PreconditionerA, class PreconditionerB>
+  BlockDiagonalPreconditioner<PreconditionerA, PreconditionerB>::
+  BlockDiagonalPreconditioner (
+    const PreconditionerA  &preconditioner_A_alpha,
+    const PreconditionerB  &preconditioner_A_beta)
+    :
+	preconditioner_A_alpha (preconditioner_A_alpha),
+    preconditioner_A_beta  (preconditioner_A_beta)
+  {}
+
+  template <class PreconditionerA, class PreconditionerB>
+  void
+  BlockDiagonalPreconditioner<PreconditionerA, PreconditionerB>::
+  vmult (BlockVector<double>       &dst,
+         const BlockVector<double> &src) const
+	{
+	  preconditioner_A_alpha.vmult(dst.block(0), src.block(0));
+	  preconditioner_A_beta.vmult(dst.block(1), src.block(1));
+	}
+
+  //**************************************************************************//
+  //**************************************************************************//
+  //**************************************************************************//
+  template <class Preconditioner, class MatrixType>
+  class BlockTriangularPreconditioner : public Subscriptor
+  {
+  public:
+	  BlockTriangularPreconditioner(const MatrixType &W,
+			  	  	  	  	  	  	const Preconditioner &A_Alpha_Inverse,
+									const Preconditioner &A_Beta_Inverse);
+
+	  void vmult (BlockVector<double>       &dst,
+			      const BlockVector<double> &src) const;
+  private:
+	  const MatrixType  &W;
+	  const Preconditioner  &A_alpha_inverse;
+	  const Preconditioner  &A_beta_inverse;
+  };
+
+  template <class Preconditioner, class MatrixType>
+  BlockTriangularPreconditioner<Preconditioner, MatrixType>::
+  BlockTriangularPreconditioner(const MatrixType &W,
+  			  	  	  	  	  	  	const Preconditioner &A_Alpha_Inverse,
+  									const Preconditioner &A_Beta_Inverse)
+  :
+  									W(W),
+									A_alpha_inverse(A_Alpha_Inverse),
+									A_beta_inverse(A_Beta_Inverse)
+									{}
+
+  template <class Preconditioner, class MatrixType>
+  void
+  BlockTriangularPreconditioner<Preconditioner, MatrixType>::
+  vmult (BlockVector<double>       &dst,
+         const BlockVector<double> &src) const
+		 {
+	  	      A_alpha_inverse.vmult(dst.block(0), src.block(0));
+	  	  	  A_beta_inverse.vmult(dst.block(1), src.block(1));
+	  	  	  Vector<double> tmp1(dst.block(1));
+	  	  	  Vector<double> tmp2(dst.block(1));
+	  	  	  W.vmult(tmp1, dst.block(1));
+	  	  	  A_alpha_inverse.vmult(tmp2, tmp1);
+	  	  	  tmp2 *= -1;
+	  	  	  dst.block(0) += tmp2;
+		 }
+
+
+
+  //**************************************************************************//
+  //**************************************************************************//
+  //**************************************************************************//
+  template <class PreconditionerMp, class PreconditionerK>
+  class BlockSchurPreconditioner2 : public Subscriptor
+  {
+  public:
+    BlockSchurPreconditioner2 (double                                     gamma,
+                               double                                     viscosity,
+                               const BlockSparseMatrix<double>            &S,
+                               const SparseMatrix<double>                 &P,
+                               const PreconditionerMp                     &Mppreconditioner,
+							   const PreconditionerK                      &Kpreconditioner
+                              );
+
+    void vmult (BlockVector<double>       &dst,
+                const BlockVector<double> &src) const;
+
+  private:
+    const double gamma;
+    const double viscosity;
+    const BlockSparseMatrix<double> &stokes_matrix;
+    const SparseMatrix<double>      &pressure_mass_matrix;
+    const PreconditionerMp          &mp_preconditioner;
+    const PreconditionerK           &K_preconditioner;
+  };
+
+  template <class PreconditionerMp, class PreconditionerK>
+  BlockSchurPreconditioner2<PreconditionerMp, PreconditionerK>::
+  BlockSchurPreconditioner2 (double                           gamma,
+                             double                           viscosity,
+                             const BlockSparseMatrix<double>  &S,
+                             const SparseMatrix<double>       &P,
+                             const PreconditionerMp           &Mppreconditioner,
+							 const PreconditionerK            &Kpreconditioner)
+    :
+    gamma                (gamma),
+    viscosity            (viscosity),
+    stokes_matrix        (S),
+    pressure_mass_matrix (P),
+    mp_preconditioner    (Mppreconditioner),
+	K_preconditioner     (Kpreconditioner)
+  {}
+  template <class PreconditionerMp, class PreconditionerK>
+  void
+  BlockSchurPreconditioner2<PreconditionerMp, PreconditionerK>::
+  vmult (BlockVector<double>       &dst,
+         const BlockVector<double> &src) const
+  {
+	  {
+	     SolverControl solver_control(1000, 1e-6 * src.block(2).l2_norm());
+	     SolverCG<>    cg (solver_control);
+
+	     dst.block(2) = 0.0;
+	     cg.solve(pressure_mass_matrix,
+	              dst.block(2), src.block(2),
+	              mp_preconditioner);
+	     dst.block(2) *= -(viscosity+gamma);
+	  }
+
+	  Vector<double> utmp(src.block(0));
+	  {
+	     stokes_matrix.block(0,2).vmult(utmp, dst.block(2));
+	     utmp*=-1.0;
+	     utmp+=src.block(0);
+	  }
+
+	  BlockMatrixArray<double> K(2,2);
+	  K.enter(stokes_matrix.block(0,0), 0, 0);
+	  K.enter(stokes_matrix.block(0,1), 0, 1);
+	  K.enter(stokes_matrix.block(1,0), 1, 0);
+	  K.enter(stokes_matrix.block(1,1), 1, 1);
+
+	  BlockVector<double> uwtmp(2);
+	  uwtmp.block(0) = utmp;
+	  uwtmp.block(1) = src.block(1);
+
+	  BlockVector<double> dst_tmp(2);
+	  dst_tmp = uwtmp;
+
+	  {
+		  SolverControl solver_control (1000,1e-6 * uwtmp.l2_norm());
+		  SolverFGMRES<BlockVector<double> >::AdditionalData gmres_data;
+		  SolverFGMRES<BlockVector<double> > gmres(solver_control,gmres_data);
+
+		  dst_tmp = 0;
+		  gmres.solve (K,
+		               dst_tmp,
+		               uwtmp,
+					   K_preconditioner);
+
+		  dst.block(0) = dst_tmp.block(0);
+		  dst.block(1) = dst_tmp.block(1);
+		  std::cout << "  ---inner iteration:  " << solver_control.last_step() << std::endl;
+	  }
+  }
+  //**************************************************************************//
+  //**************************************************************************//
+  //**************************************************************************//
+
 
   template <int dim>
   Navier_Stokes_Newton<dim>::Navier_Stokes_Newton(const unsigned int degree)
     :
 
-    viscosity(1.0/2.0),
+    viscosity(1.0/30.0),
     gamma(1.0),
+	gamma1(0.0),
+	gamma2(0.0),
+	gamma3(1.0),
     degree(degree),
     triangulation(Triangulation<dim>::maximum_smoothing),
     fe(FE_Q<dim>(degree+1), dim,
-       FE_Q<dim>(degree),   1,
-       FE_Q<dim>(degree+1), dim),
+       FE_Q<dim>(degree+1), dim,
+       FE_Q<dim>(degree),   1),
     dof_handler(triangulation)
   {}
 
@@ -416,21 +715,20 @@ namespace Step58
     pressure_mass_matrix.clear();
 
     dof_handler.distribute_dofs (fe);
-//    DoFRenumbering::Cuthill_McKee (dof_handler);
 
     std::vector<unsigned int> component_u(dim, 0);
-    std::vector<unsigned int> component_p(1,   1);
-    std::vector<unsigned int> component_w(dim, 2);
+    std::vector<unsigned int> component_w(dim, 1);
+    std::vector<unsigned int> component_p(1,   2);
     std::vector<unsigned int> block_component;
 
     block_component.insert(block_component.end(), component_u.begin(), component_u.end());
-    block_component.insert(block_component.end(), component_p.begin(), component_p.end());
     block_component.insert(block_component.end(), component_w.begin(), component_w.end());
+    block_component.insert(block_component.end(), component_p.begin(), component_p.end());
 
     DoFRenumbering::component_wise (dof_handler, block_component);
 
     FEValuesExtractors::Vector velocities(0);
-    FEValuesExtractors::Vector vorticity(dim+1);
+    FEValuesExtractors::Vector vorticity(dim);
 
     {
       nonzero_constraints.clear();
@@ -473,8 +771,8 @@ namespace Step58
     std::vector<types::global_dof_index> dofs_per_block (3);
     DoFTools::count_dofs_per_block (dof_handler, dofs_per_block, block_component);
     dof_u = dofs_per_block[0];
-    dof_p = dofs_per_block[1];
-    dof_w = dofs_per_block[2];
+    dof_w = dofs_per_block[1];
+    dof_p = dofs_per_block[2];
 
     std::cout <<"*****************************************" << std::endl
     		  <<"       DoF Information        " << std::endl
@@ -485,9 +783,17 @@ namespace Step58
               << std::endl
               << "   Number of degrees of freedom: "
               << dof_handler.n_dofs()
-              << " (" << dof_u << '+' << dof_p << '+' << dof_w << ')' << std::endl
+              << " (" << dof_u << '+' << dof_w << '+' << dof_p << ')' << std::endl
 			  << "*****************************************"
               << std::endl;
+
+    std::cout << "  gamma = " << gamma << " ; "
+    		  << "  gamma1 = "<< gamma1<< " ; "
+			  << "  gamma2 = "<< gamma2<< " ; "
+			  << "  gamma3 = "<< gamma3<< std::endl
+			  << "*****************************************" << std::endl;
+
+    BlockSparseMatrix<double> J;
   }
 
   template <int dim>
@@ -496,16 +802,16 @@ namespace Step58
     {
       BlockDynamicSparsityPattern dsp (3,3);
       dsp.block(0,0).reinit (dof_u, dof_u);
-      dsp.block(1,0).reinit (dof_p, dof_u);
-      dsp.block(2,0).reinit (dof_w, dof_u);
+      dsp.block(1,0).reinit (dof_w, dof_u);
+      dsp.block(2,0).reinit (dof_p, dof_u);
 
-      dsp.block(0,1).reinit (dof_u, dof_p);
-      dsp.block(1,1).reinit (dof_p, dof_p);
-      dsp.block(2,1).reinit (dof_w, dof_p);
+      dsp.block(0,1).reinit (dof_u, dof_w);
+      dsp.block(1,1).reinit (dof_w, dof_w);
+      dsp.block(2,1).reinit (dof_p, dof_w);
 
-      dsp.block(0,2).reinit (dof_u, dof_w);
-      dsp.block(1,2).reinit (dof_p, dof_w);
-      dsp.block(2,2).reinit (dof_w, dof_w);
+      dsp.block(0,2).reinit (dof_u, dof_p);
+      dsp.block(1,2).reinit (dof_w, dof_p);
+      dsp.block(2,2).reinit (dof_p, dof_p);
 
       dsp.collect_sizes();
 
@@ -517,21 +823,26 @@ namespace Step58
 
     present_solution.reinit (3);
     present_solution.block(0).reinit (dof_u);
-    present_solution.block(1).reinit (dof_p);
-    present_solution.block(2).reinit (dof_w);
+    present_solution.block(1).reinit (dof_w);
+    present_solution.block(2).reinit (dof_p);
     present_solution.collect_sizes ();
 
     newton_update.reinit (3);
     newton_update.block(0).reinit (dof_u);
-    newton_update.block(1).reinit (dof_p);
-    newton_update.block(2).reinit (dof_w);
+    newton_update.block(1).reinit (dof_w);
+    newton_update.block(2).reinit (dof_p);
     newton_update.collect_sizes ();
 
     system_rhs.reinit (3);
     system_rhs.block(0).reinit (dof_u);
-    system_rhs.block(1).reinit (dof_p);
-    system_rhs.block(2).reinit (dof_w);
+    system_rhs.block(1).reinit (dof_w);
+    system_rhs.block(2).reinit (dof_p);
     system_rhs.collect_sizes ();
+
+    std::cout <<"*****************************************" << std::endl
+    		  <<"      Initialize system complete        " << std::endl
+			  <<"*****************************************"
+			  << std::endl;
   }
 
   template <int dim>
@@ -564,8 +875,8 @@ namespace Step58
     const unsigned int   n_q_points    = quadrature_formula.size();
 
     const FEValuesExtractors::Vector velocities (0);
-    const FEValuesExtractors::Scalar pressure (dim);
-    const FEValuesExtractors::Vector vorticity (dim+1);
+    const FEValuesExtractors::Vector vorticity (dim);
+    const FEValuesExtractors::Scalar pressure (dim+dim);
 
 
     FullMatrix<double>   local_matrix (dofs_per_cell, dofs_per_cell);
@@ -583,9 +894,7 @@ namespace Step58
 
     std::vector<Tensor<1, dim>>   present_vorticity_values    (n_q_points);
     std::vector<Tensor<2, dim>>   present_vorticity_gradients (n_q_points);
-
-//    const RightHandSide<dim>      right_hand_side(viscosity);
-//    std::vector<Vector<double> >  rhs_values (n_q_points);
+    std::vector<double>           present_vorticity_divergence (n_q_points);
 
     const RightHandSide<dim>      right_hand_side (viscosity);
     std::vector<Vector<double>>   rhs_values(n_q_points, Vector<double>(dim+dim+1));
@@ -599,6 +908,7 @@ namespace Step58
 
     std::vector<double>           phi_p                     (dofs_per_cell);
 
+    std::vector<double>           div_phi_w                 (dofs_per_cell);
     std::vector<Tensor<1, dim>>   phi_w                     (dofs_per_cell);
     std::vector<Tensor<2, dim>>   grad_phi_w                (dofs_per_cell);
 
@@ -636,6 +946,9 @@ namespace Step58
         fe_values[vorticity].get_function_gradients(evaluation_point,
                                                     present_vorticity_gradients);
 
+        fe_values[vorticity].get_function_divergences(evaluation_point,
+                                                      present_vorticity_divergence);
+
         for (unsigned int q=0; q<n_q_points; ++q)
           {
             for (unsigned int k=0; k<dofs_per_cell; ++k)
@@ -647,6 +960,7 @@ namespace Step58
 
                 phi_p[k]      =  fe_values[pressure]  .value(k, q);
 
+                div_phi_w[k]  =  fe_values[vorticity].divergence (k, q);
                 phi_w[k]      =  fe_values[vorticity].value(k, q);
                 grad_phi_w[k] =  fe_values[vorticity].gradient(k, q);
               }
@@ -663,7 +977,7 @@ namespace Step58
                                                  + grad_phi_u[j]*present_velocity_values[q]*phi_u[i]         //(U_old*grad_d_U, V_u)
                                                  - phi_p[j]*div_phi_u[i]                                     //-(d_P, div_V_u)
                                                  + 0.5*cross_product_3d(present_vorticity_values[q], phi_u[j])*phi_u[i]
-                                                 + 0.5*cross_product_3d(phi_w[j], present_velocity_values[q])*phi_u[i]
+                                                 + 0.5*cross_product_3d(phi_w[j], present_velocity_values[q])*phi_u[i]  //DW
                                                  - 0.5*cross_product_3d(curl_phi_u[j], present_velocity_values[q])*phi_u[i]
                                                  - 0.5*cross_product_3d(present_velocity_curls[q], phi_u[j])*phi_u[i]
 
@@ -671,12 +985,16 @@ namespace Step58
 
                                                  + viscosity*scalar_product(grad_phi_w[j], grad_phi_w[i])   //nu(grad_d_W, grad_V_w)
                                                  + grad_phi_w[j]*present_velocity_values[q]*phi_w[i]        //(U_old*grad_d_W, V_w)
-                                                 + present_vorticity_gradients[q]*phi_u[j]*phi_w[i]         //(d_U*grad_W_old, V_w)
+                                                 + present_vorticity_gradients[q]*phi_u[j]*phi_w[i]         //(d_U*grad_W_old, V_w) DN
                                                  - present_velocity_gradients[q]*phi_w[j]*phi_w[i]          //(d_W*grad_U_old, V_w)
-                                                 - grad_phi_u[j]*present_vorticity_values[q]*phi_w[i]       //(W_old*grad_d_U, V_w)
+                                                 - grad_phi_u[j]*present_vorticity_values[q]*phi_w[i]       //(W_old*grad_d_U, V_w) DN
 
-                                                 + gamma*div_phi_u[j]*div_phi_u[i]                     //grad-div (div_u_j, div_u_i)
-                                                 + phi_p[i]*phi_p[j]                                   //Mp-mass matrix of pressure
+                                                 + gamma*div_phi_u[j]*div_phi_u[i]               //(div_u_j, div_u_i) on A_alpha
+												 + gamma1*div_phi_u[j]*div_phi_w[i]              //(div_u_j, div_w_i) on N
+												 + gamma2*div_phi_w[j]*div_phi_u[i]              //(div_w_j, div_u_i) on W
+									             + gamma3*div_phi_w[j]*div_phi_w[i]              //(div_w_j, div_w_i) on A_beta
+
+                                                 + phi_p[i]*phi_p[j]                             //Mp-mass matrix of pressure
 											  )* fe_values.JxW(q);
                       }
                   }
@@ -695,6 +1013,9 @@ namespace Step58
                                        -present_vorticity_gradients[q]*present_velocity_values[q]*phi_w[i]     //-(U_old*grad_W_old, V_w)
                                        +present_velocity_gradients[q]*present_vorticity_values[q]*phi_w[i]     //+(W_old*grad_U_old, V_w)
                                        -gamma*present_velocity_divergence[q]*div_phi_u[i]
+									   -gamma1*present_velocity_divergence[q]*div_phi_w[i]
+									   -gamma2*present_vorticity_divergence[q]*div_phi_u[i]
+									   -gamma3*present_vorticity_divergence[q]*div_phi_w[i]
                                     )*fe_values.JxW(q);
                   }
 
@@ -741,9 +1062,9 @@ namespace Step58
 
     if (assemble_matrix)
       {
-        pressure_mass_matrix.reinit(sparsity_pattern.block(1,1));
-        pressure_mass_matrix.copy_from(system_matrix.block(1,1));
-        system_matrix.block(1,1) = 0;
+        pressure_mass_matrix.reinit(sparsity_pattern.block(2,2));
+        pressure_mass_matrix.copy_from(system_matrix.block(2,2));
+        system_matrix.block(2,2) = 0;
       }
 
   }
@@ -758,33 +1079,70 @@ namespace Step58
 		  G_direct.vmult (newton_update, system_rhs);
 	  }
 
-    SolverControl solver_control (system_matrix.m(),1e-4*system_rhs.l2_norm(), true);
+	    SolverControl solver_control (system_matrix.m(),1e-4*system_rhs.l2_norm(), true);
 
-    SolverFGMRES<BlockVector<double> >::AdditionalData gmres_data;
+	    SolverFGMRES<BlockVector<double> >::AdditionalData gmres_data;
 
-    SolverFGMRES<BlockVector<double> > gmres(solver_control,gmres_data);
+	    SolverFGMRES<BlockVector<double> > gmres(solver_control,gmres_data);
 
-    SparseILU<double> pmass_preconditioner;
-    pmass_preconditioner.initialize (pressure_mass_matrix,
-                                     SparseILU<double>::AdditionalData());
+	    SparseILU<double> pmass_preconditioner;
+	    pmass_preconditioner.initialize (pressure_mass_matrix,
+	                                     SparseILU<double>::AdditionalData());
 
-    const BlockSchurPreconditioner<SparseILU<double>>
-                                                   preconditioner (gamma,
-                                                		   	   	   viscosity,
-																   system_matrix,
-																   pressure_mass_matrix,
-																   pmass_preconditioner);
+    const InverseMatrix< SparseMatrix<double> > A_alpha_inverse(system_matrix.block(0,0));
+    const InverseMatrix< SparseMatrix<double> > A_beta_inverse (system_matrix.block(1,1));
 
-    newton_update = 0;
-    gmres.solve (system_matrix,
-                 newton_update,
-                 system_rhs,
-                 preconditioner);
+
+//    const BlockDiagonalPreconditioner< InverseMatrix< SparseMatrix<double> >,
+//									   InverseMatrix< SparseMatrix<double> > >
+//    													K_preconditioner(A_alpha_inverse, A_beta_inverse);
+//    const BlockSchurPreconditioner2< SparseILU<double>,
+//									 BlockDiagonalPreconditioner<InverseMatrix< SparseMatrix<double> >,
+//																 InverseMatrix< SparseMatrix<double> > > >
+//    												   preconditioner (gamma,
+//                                                    		   	   	   viscosity,
+//    																   system_matrix,
+//    																   pressure_mass_matrix,
+//                													   pmass_preconditioner,
+//																	   K_preconditioner);
+
+
+    const BlockTriangularPreconditioner< InverseMatrix< SparseMatrix<double> >, SparseMatrix<double> >
+                                                        K_preconditioner1(system_matrix.block(0,1),
+                                                        		          A_alpha_inverse,
+																		  A_beta_inverse);
+
+        const BlockSchurPreconditioner2< SparseILU<double>,
+		                                 BlockTriangularPreconditioner< InverseMatrix< SparseMatrix<double> >,
+										                                SparseMatrix<double> > >
+        												   preconditioner (gamma,
+                                                        		   	   	   viscosity,
+        																   system_matrix,
+        																   pressure_mass_matrix,
+                    													   pmass_preconditioner,
+    																	   K_preconditioner1);
+
+        newton_update = 0;
+        gmres.solve (system_matrix,
+                     newton_update,
+                     system_rhs,
+                     preconditioner);
+
+//
+//    const BlockSchurPreconditioner<SparseILU<double>>
+//                                                   preconditioner (gamma,
+//                                                		   	   	   viscosity,
+//																   system_matrix,
+//																   pressure_mass_matrix,
+//            													   pmass_preconditioner);
+//    std::cout << "  Computing linear system -----" << std::endl;
 
 //    gmres.solve (system_matrix,
 //                 newton_update,
 //                 system_rhs,
-//				 IdentityMatrix(newton_update.size()));
+//                 preconditioner);
+
+
 
     std::cout << " ****FGMRES steps: " << solver_control.last_step() << std::endl;
 
@@ -838,6 +1196,7 @@ namespace Step58
                 std::cout << "******************************" << std::endl;
                 std::cout << " The residual of initial guess is " << current_res << std::endl;
                 std::cout << " Initialization complete!  " << std::endl;
+                std::cout << "---------------------------------------- " << std::endl;
                 last_res = current_res;
               }
 
@@ -871,6 +1230,7 @@ namespace Step58
                 nonzero_constraints.distribute(present_solution);
                 std::cout << " ----The " << outer_iteration << "th iteration. ---- " << std::endl;
                 std::cout << " ----Residual: " << current_res << std::endl;
+                std::cout << "---------------------------------------- " << std::endl;
                 last_res = current_res;
               }
 
@@ -901,15 +1261,15 @@ namespace Step58
   void Navier_Stokes_Newton<dim>::refine_mesh()
   {
 
-    Vector<float> estimated_error_per_cell (triangulation.n_active_cells());
-    FEValuesExtractors::Vector velocity(0);
-    KellyErrorEstimator<dim>::estimate (dof_handler,
-                                        QGauss<dim-1>(degree+1),
-                                        typename FunctionMap<dim>::type(),
-                                        present_solution,
-                                        estimated_error_per_cell,
-                                        fe.component_mask(velocity));
-
+//    Vector<float> estimated_error_per_cell (triangulation.n_active_cells());
+//    FEValuesExtractors::Vector velocity(0);
+//    KellyErrorEstimator<dim>::estimate (dof_handler,
+//                                        QGauss<dim-1>(degree+1),
+//                                        typename FunctionMap<dim>::type(),
+//                                        present_solution,
+//                                        estimated_error_per_cell,
+//                                        fe.component_mask(velocity));
+//
 //    GridRefinement::refine_and_coarsen_fixed_number (triangulation,
 //                                                     estimated_error_per_cell,
 //                                                     0.3, 0.0);
@@ -929,8 +1289,8 @@ namespace Step58
     BlockVector<double> tmp;
     tmp.reinit (3);
     tmp.block(0).reinit (dof_u);
-    tmp.block(1).reinit (dof_p);
-    tmp.block(2).reinit (dof_w);
+    tmp.block(1).reinit (dof_w);
+    tmp.block(2).reinit (dof_p);
     tmp.collect_sizes ();
 
     //  Transfer solution from coarse to fine mesh and apply boundary value constraints
@@ -949,7 +1309,7 @@ namespace Step58
 
       bool is_initial_step = true;
 
-      for (double Re=1000.0; Re < target_Re; Re = std::min(Re+step_size, target_Re))
+      for (double Re=30.0; Re < target_Re; Re = std::min(Re+step_size, target_Re))
         {
           viscosity = 1/Re;
           std::cout << "*****************************************" << std::endl;
@@ -966,15 +1326,15 @@ namespace Step58
   {
     std::vector<std::string> solution_names (dim, "velocity");
 
+    solution_names.push_back ("vorticity");
+    solution_names.push_back ("vorticity");
+    solution_names.push_back ("vorticity");
     solution_names.push_back ("pressure");
-    solution_names.push_back ("vorticity");
-    solution_names.push_back ("vorticity");
-    solution_names.push_back ("vorticity");
 
     std::vector<DataComponentInterpretation::DataComponentInterpretation>
     data_component_interpretation
     (1+2*dim, DataComponentInterpretation::component_is_part_of_vector);
-    data_component_interpretation[dim] = DataComponentInterpretation::component_is_scalar;
+    data_component_interpretation[dim+dim] = DataComponentInterpretation::component_is_scalar;
     DataOut<dim> data_out;
     data_out.attach_dof_handler (dof_handler);
     data_out.add_data_vector (present_solution, solution_names,
@@ -1026,8 +1386,8 @@ namespace Step58
 
       ExactSolution<dim> exact_solution(viscosity);
       const ComponentSelectFunction<dim> velocity_mask(std::make_pair(0, dim), dim+dim+1);
-      const ComponentSelectFunction<dim> pressure_mask (dim, dim+dim+1);
-      const ComponentSelectFunction<dim> vorticity_mask(std::make_pair(dim+1, dim+dim+1), dim+dim+1);
+      const ComponentSelectFunction<dim> vorticity_mask(std::make_pair(dim, dim+dim), dim+dim+1);
+      const ComponentSelectFunction<dim> pressure_mask (dim+dim, dim+dim+1);
 
       VectorTools::integrate_difference(dof_handler,
                                         present_solution,
@@ -1051,9 +1411,9 @@ namespace Step58
       const double mean_pressure = VectorTools::compute_mean_value (dof_handler,
                                    QGauss<dim>(degree+2),
                                    present_solution,
-                                   dim);
+                                   dim+dim);
 
-      present_solution.block(1).add(-mean_pressure);
+      present_solution.block(2).add(-mean_pressure);
       VectorTools::integrate_difference(dof_handler,
                                         present_solution,
                                         exact_solution,
@@ -1066,16 +1426,19 @@ namespace Step58
 
 
 
-      std::cout <<"At   " << refinement << " refinement  |V|_l2 is: " << L2_V_error << std::endl
-    		    <<"At   " << refinement << " refinement  |P|_l2 is: " << L2_P_error << " with mean value "
+      std::cout <<"*****************************************"<< std::endl
+    		    <<"           L2_error                      "<< std::endl
+				<<"*****************************************"<< std::endl
+	            <<"At " << refinement << " refinement  |V|_l2 is: " << L2_V_error << std::endl
+    		    <<"At " << refinement << " refinement  |P|_l2 is: " << L2_P_error << " with mean value "
 				<< mean_pressure << std::endl
-			    <<"At   " << refinement << " refinement  |W|_l2 is: " << L2_W_error << std::endl;
+			    <<"At " << refinement << " refinement  |W|_l2 is: " << L2_W_error << std::endl;
   }
 
   template <int dim>
   void Navier_Stokes_Newton<dim>::run()
   {
-    const Point<dim> bottom_left(-0.5,-0.5,0);
+    const Point<dim> bottom_left(0,0,0);
     const Point<dim> top_right(1,1,0.5);
     std::vector<unsigned int> direction(3);
     direction[0] = 2;
@@ -1091,7 +1454,7 @@ namespace Step58
 
     // When the viscosity is larger than 1/1000, the solution to Stokes equations is good enough as an initial guess. If so,
     // we do not need to search for the initial guess via staircase. Newton's iteration can be started directly.
-    if (Reynold <= 1000)
+    if (Reynold <= 30)
       {
         newton_iteration(1e-12, 50, 3, true, true);
       }
@@ -1103,7 +1466,7 @@ namespace Step58
     else
       {
         std::cout << "       Searching for initial guess ... " << std::endl;
-        search_initial_guess(2000.0);
+        search_initial_guess(20.0);
         std::cout << "*****************************************" << std::endl
                   << "       Initial guess obtained            " << std::endl
                   << "                  *                      " << std::endl
@@ -1116,7 +1479,7 @@ namespace Step58
         std::cout << "       Computing solution with target viscosity ..." <<std::endl;
         std::cout << "       Reynold = " << Reynold << std::endl;
         viscosity = 1.0/Reynold;
-        newton_iteration(1e-12, 50, 4, false, true);
+        newton_iteration(1e-12, 50, 1, false, true);
       }
 
   }
